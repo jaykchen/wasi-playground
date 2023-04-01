@@ -1,0 +1,323 @@
+diff --git a/include/ast/instruction.h b/include/ast/instruction.h
+index 61c48d75412..394243a12b3 100644
+--- a/include/ast/instruction.h
++++ b/include/ast/instruction.h
+@@ -57,7 +57,7 @@ class Instruction {
+       std::copy_n(Instr.Data.BrTable.LabelList, Data.BrTable.LabelListSize,
+                   Data.BrTable.LabelList);
+     } else if (Flags.IsAllocValTypeList) {
+-      Data.SelectT.ValTypeList = new FullValType[Data.SelectT.ValTypeListSize];
++      Data.SelectT.ValTypeList = new ValType[Data.SelectT.ValTypeListSize];
+       std::copy_n(Instr.Data.SelectT.ValTypeList, Data.SelectT.ValTypeListSize,
+                   Data.SelectT.ValTypeList);
+     }
+@@ -90,8 +90,8 @@ class Instruction {
+   uint32_t getOffset() const noexcept { return Offset; }
+ 
+   /// Getter and setter of block type.
+-  BlockType getBlockType() const noexcept { return Data.Blocks.ResType; }
+-  void setBlockType(FullValType VType) noexcept {
++  const BlockType &getBlockType() const noexcept { return Data.Blocks.ResType; }
++  void setBlockType(const ValType &VType) noexcept {
+     Data.Blocks.ResType.setData(VType);
+   }
+   void setBlockType(uint32_t Idx) noexcept { Data.Blocks.ResType.setData(Idx); }
+@@ -106,8 +106,8 @@ class Instruction {
+   void setJumpElse(const uint32_t Cnt) noexcept { Data.Blocks.JumpElse = Cnt; }
+ 
+   /// Getter and setter of reference type.
+-  FullRefType getRefType() const noexcept { return Data.ReferenceType; }
+-  void setRefType(FullRefType RType) noexcept { Data.ReferenceType = RType; }
++  const RefType &getRefType() const noexcept { return Data.ReferenceType; }
++  void setRefType(const RefType &RType) noexcept { Data.ReferenceType = RType; }
+ 
+   /// Getter and setter of label list.
+   void setLabelListSize(uint32_t Size) {
+@@ -142,17 +142,17 @@ class Instruction {
+     reset();
+     if (Size > 0) {
+       Data.SelectT.ValTypeListSize = Size;
+-      Data.SelectT.ValTypeList = new FullValType[Size];
++      Data.SelectT.ValTypeList = new ValType[Size];
+       Flags.IsAllocValTypeList = true;
+     }
+   }
+-  Span<const FullValType> getValTypeList() const noexcept {
+-    return Span<const FullValType>(Data.SelectT.ValTypeList,
+-                                   Data.SelectT.ValTypeListSize);
++  Span<const ValType> getValTypeList() const noexcept {
++    return Span<const ValType>(Data.SelectT.ValTypeList,
++                               Data.SelectT.ValTypeListSize);
+   }
+-  Span<FullValType> getValTypeList() noexcept {
+-    return Span<FullValType>(Data.SelectT.ValTypeList,
+-                             Data.SelectT.ValTypeListSize);
++  Span<ValType> getValTypeList() noexcept {
++    return Span<ValType>(Data.SelectT.ValTypeList,
++                         Data.SelectT.ValTypeListSize);
+   }
+ 
+   /// Getter and setter of target index.
+@@ -243,11 +243,11 @@ class Instruction {
+       JumpDescriptor *LabelList;
+     } BrTable;
+     // Type 5: RefType.
+-    FullRefType ReferenceType;
++    RefType ReferenceType;
+     // Type 6: ValTypeList.
+     struct {
+       uint32_t ValTypeListSize;
+-      FullValType *ValTypeList;
++      ValType *ValTypeList;
+     } SelectT;
+     // Type 7: TargetIdx, MemAlign, MemOffset, and MemLane.
+     struct {
+diff --git a/include/ast/segment.h b/include/ast/segment.h
+index ff3069068f8..03ef3408f43 100644
+--- a/include/ast/segment.h
++++ b/include/ast/segment.h
+@@ -59,8 +59,8 @@ class ElementSegment : public Segment {
+   void setMode(ElemMode EMode) noexcept { Mode = EMode; }
+ 
+   /// Getter of reference type.
+-  FullRefType getRefType() const noexcept { return Type; }
+-  void setRefType(FullRefType RType) noexcept { Type = RType; }
++  const RefType &getRefType() const noexcept { return Type; }
++  void setRefType(const RefType &RType) noexcept { Type = RType; }
+ 
+   /// Getter of table index.
+   uint32_t getIdx() const noexcept { return TableIdx; }
+@@ -74,7 +74,7 @@ class ElementSegment : public Segment {
+   /// \name Data of ElementSegment node.
+   /// @{
+   ElemMode Mode = ElemMode::Active;
+-  FullRefType Type = RefType::FuncRef;
++  RefType Type = RefTypeCode::FuncRef;
+   uint32_t TableIdx = 0;
+   std::vector<Expression> InitExprs;
+   /// @}
+@@ -88,10 +88,10 @@ class CodeSegment : public Segment {
+   void setSegSize(uint32_t Size) noexcept { SegSize = Size; }
+ 
+   /// Getter of locals vector.
+-  Span<const std::pair<uint32_t, FullValType>> getLocals() const noexcept {
++  Span<const std::pair<uint32_t, ValType>> getLocals() const noexcept {
+     return Locals;
+   }
+-  std::vector<std::pair<uint32_t, FullValType>> &getLocals() noexcept {
++  std::vector<std::pair<uint32_t, ValType>> &getLocals() noexcept {
+     return Locals;
+   }
+ 
+@@ -103,7 +103,7 @@ class CodeSegment : public Segment {
+   /// \name Data of CodeSegment node.
+   /// @{
+   uint32_t SegSize = 0;
+-  std::vector<std::pair<uint32_t, FullValType>> Locals;
++  std::vector<std::pair<uint32_t, ValType>> Locals;
+   Symbol<void> FuncSymbol;
+   /// @}
+ };
+diff --git a/include/ast/type.h b/include/ast/type.h
+index 387c8e6cebb..b1a021f0753 100644
+--- a/include/ast/type.h
++++ b/include/ast/type.h
+@@ -81,10 +81,9 @@ class FunctionType {
+ 
+   /// Constructors.
+   FunctionType() = default;
+-  FunctionType(Span<const FullValType> P, Span<const FullValType> R)
++  FunctionType(Span<const ValType> P, Span<const ValType> R)
+       : ParamTypes(P.begin(), P.end()), ReturnTypes(R.begin(), R.end()) {}
+-  FunctionType(Span<const FullValType> P, Span<const FullValType> R,
+-               Symbol<Wrapper> S)
++  FunctionType(Span<const ValType> P, Span<const ValType> R, Symbol<Wrapper> S)
+       : ParamTypes(P.begin(), P.end()), ReturnTypes(R.begin(), R.end()),
+         WrapSymbol(std::move(S)) {}
+ 
+@@ -101,16 +100,16 @@ class FunctionType {
+   }
+ 
+   /// Getter of param types.
+-  const std::vector<FullValType> &getParamTypes() const noexcept {
++  const std::vector<ValType> &getParamTypes() const noexcept {
+     return ParamTypes;
+   }
+-  std::vector<FullValType> &getParamTypes() noexcept { return ParamTypes; }
++  std::vector<ValType> &getParamTypes() noexcept { return ParamTypes; }
+ 
+   /// Getter of return types.
+-  const std::vector<FullValType> &getReturnTypes() const noexcept {
++  const std::vector<ValType> &getReturnTypes() const noexcept {
+     return ReturnTypes;
+   }
+-  std::vector<FullValType> &getReturnTypes() noexcept { return ReturnTypes; }
++  std::vector<ValType> &getReturnTypes() noexcept { return ReturnTypes; }
+ 
+   /// Getter and setter of symbol.
+   const auto &getSymbol() const noexcept { return WrapSymbol; }
+@@ -119,8 +118,8 @@ class FunctionType {
+ private:
+   /// \name Data of FunctionType.
+   /// @{
+-  std::vector<FullValType> ParamTypes;
+-  std::vector<FullValType> ReturnTypes;
++  std::vector<ValType> ParamTypes;
++  std::vector<ValType> ReturnTypes;
+   Symbol<Wrapper> WrapSymbol;
+   /// @}
+ };
+@@ -150,16 +149,17 @@ class MemoryType {
+ class TableType {
+ public:
+   /// Constructors.
+-  TableType() noexcept : Type(RefType::FuncRef), Lim() {}
+-  TableType(FullRefType RType, uint32_t MinVal) noexcept
++  TableType() noexcept : Type(RefTypeCode::FuncRef), Lim() {}
++  TableType(const RefType &RType, uint32_t MinVal) noexcept
+       : Type(RType), Lim(MinVal) {}
+-  TableType(FullRefType RType, uint32_t MinVal, uint32_t MaxVal) noexcept
++  TableType(const RefType &RType, uint32_t MinVal, uint32_t MaxVal) noexcept
+       : Type(RType), Lim(MinVal, MaxVal) {}
+-  TableType(FullRefType RType, const Limit &L) noexcept : Type(RType), Lim(L) {}
++  TableType(const RefType &RType, const Limit &L) noexcept
++      : Type(RType), Lim(L) {}
+ 
+   /// Getter of reference type.
+-  FullRefType getRefType() const noexcept { return Type; }
+-  void setRefType(FullRefType RType) noexcept { Type = RType; }
++  const RefType &getRefType() const noexcept { return Type; }
++  void setRefType(const RefType &RType) noexcept { Type = RType; }
+ 
+   /// Getter of limit.
+   const Limit &getLimit() const noexcept { return Lim; }
+@@ -168,7 +168,7 @@ class TableType {
+ private:
+   /// \name Data of TableType.
+   /// @{
+-  FullRefType Type;
++  RefType Type;
+   Limit Lim;
+   /// @}
+ };
+@@ -177,8 +177,8 @@ class TableType {
+ class GlobalType {
+ public:
+   /// Constructors.
+-  GlobalType() noexcept : Type(ValType::I32), Mut(ValMut::Const) {}
+-  GlobalType(FullValType VType, ValMut VMut) noexcept
++  GlobalType() noexcept : Type(ValTypeCode::I32), Mut(ValMut::Const) {}
++  GlobalType(const ValType &VType, ValMut VMut) noexcept
+       : Type(VType), Mut(VMut) {}
+ 
+   /// `==` and `!=` operator overloadings.
+@@ -193,8 +193,8 @@ class GlobalType {
+   }
+ 
+   /// Getter and setter of value type.
+-  FullValType getValType() const noexcept { return Type; }
+-  void setValType(FullValType VType) noexcept { Type = VType; }
++  const ValType &getValType() const noexcept { return Type; }
++  void setValType(const ValType &VType) noexcept { Type = VType; }
+ 
+   /// Getter and setter of value mutation.
+   ValMut getValMut() const noexcept { return Mut; }
+@@ -203,7 +203,7 @@ class GlobalType {
+ private:
+   /// \name Data of GlobalType.
+   /// @{
+-  FullValType Type;
++  ValType Type;
+   ValMut Mut;
+   /// @}
+ };
+diff --git a/include/common/enum.inc b/include/common/enum.inc
+index 14890eb9b90..eba6054c798 100644
+--- a/include/common/enum.inc
++++ b/include/common/enum.inc
+@@ -41,10 +41,8 @@ A(Seg_Global, "global segment")
+ A(Seg_Element, "element segment")
+ A(Seg_Code, "code segment")
+ A(Seg_Data, "data segment")
+-A(Type_Function, "function type")
+-A(Type_ValType, "value type")
+-A(Type_RefType, "reference type")
+ A(Type_Limit, "limit")
++A(Type_Function, "function type")
+ A(Type_Memory, "memory type")
+ A(Type_Table, "table type")
+ A(Type_Global, "global type")
+@@ -902,9 +900,7 @@ I(Lane, "lane")
+ 
+ // enum_types.h
+ 
+-// The raw ValType definition is deprecated. If you want to support more
+-// ValType, add to the new definition of NumType or RefType.
+-#ifdef UseValType
++#ifdef UseValTypeCode
+ #define V Line
+ 
+ V(I32, 0x7F, "i32")
+@@ -912,13 +908,15 @@ V(I64, 0x7E, "i64")
+ V(F32, 0x7D, "f32")
+ V(F64, 0x7C, "f64")
+ V(V128, 0x7B, "v128")
+-V(FuncRef, 0x70, "funcref")
+-V(ExternRef, 0x6F, "externref")
++V(FuncRef, 0x70, "func")
++V(ExternRef, 0x6F, "extern")
++V(Ref, 0x6B, "ref")
++V(RefNull, 0x6C, "nullable ref")
+ 
+ #undef V
+-#endif // UseValType
++#endif // UseValTypeCode
+ 
+-#ifdef UseNumType
++#ifdef UseNumTypeCode
+ #define N Line
+ 
+ N(I32, 0x7F)
+@@ -928,39 +926,18 @@ N(F64, 0x7C)
+ N(V128, 0x7B)
+ 
+ #undef N
+-#endif // UseNumType
+-
+-#ifdef UseHeapTypeCode
+-#define H Line
+-
+-H(Extern, 0x6F)
+-H(Func, 0x70)
+-// This stands for type defined in wasm module. The value `0xFF` is an arbitary
+-// value.
+-H(Defined, 0xFF)
+-
+-#undef V
+-#endif // UseHeapTypeCode
++#endif // UseNumTypeCode
+ 
+ #ifdef UseRefTypeCode
+ #define R Line
+ 
+ R(Ref, 0x6B)
+ R(RefNull, 0x6C)
+-
+-#undef R
+-#endif // UseRefTypeCode
+-
+-// The raw RefType definition is deprecated. If you want to support more
+-// RefType, add to HeapType and RefTypeCode.
+-#ifdef UseRefType
+-#define R Line
+-
+-R(FuncRef, 0x70)
+ R(ExternRef, 0x6F)
++R(FuncRef, 0x70)
+ 
+ #undef R
+-#endif // UseRefType
++#endif // UseRefTypeCode
+ 
+ #ifdef UseValMut
+ #define M Line

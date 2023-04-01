@@ -1,0 +1,1290 @@
+diff --git a/docs/book/en/src/SUMMARY.md b/docs/book/en/src/SUMMARY.md
+index 5cca1da0951..d5a6b5eb9bb 100644
+--- a/docs/book/en/src/SUMMARY.md
++++ b/docs/book/en/src/SUMMARY.md
+@@ -131,6 +131,8 @@
+   - [`wasmedgec` AOT Compiler](cli/wasmedgec.md)
+ 
+ - [Develop WasmEdge Plug-in](plugin.md)
++  - [Develop Plug-in in C API](develop_plugin/c.md)
++  - [Develop Plug-in in C++](develop_plugin/cpp.md)
+ 
+ - [Contribute to WasmEdge](contribute.md)
+   - [Release Process](contribute/release_process.md)
+diff --git a/docs/book/en/src/develop_plugin/c.md b/docs/book/en/src/develop_plugin/c.md
+new file mode 100644
+index 00000000000..00b75c2330c
+--- /dev/null
++++ b/docs/book/en/src/develop_plugin/c.md
+@@ -0,0 +1,193 @@
++# Develop WasmEdge Plug-in in C API
++
++## Prerequisites
++
++For developing the WasmEdge plug-in in C API, please [install WasmEdge](../quick_start/install.md) first.
++
++## Example
++
++Assume that the plug-in example is in the file `testplugin.c`.
++
++### Host Functions
++
++The goal of the plug-in is to provide the host functions which can be imported when instantiating WASM.
++Therefore, developers can implement their plug-in host functions first, as the same as the [host functions in WasmEdge C API](../sdk/c/ref.md#host-functions).
++
++> For the more details about the [external data](../sdk/c/hostfunction.md#host-data) and [calling frame context](../sdk/c/hostfunction.md#calling-frame-context), please refer to the host function guide.
++
++```c
++#include <wasmedge/wasmedge.h>
++
++/* The host function definitions. */
++
++/* The host function to add 2 int32_t numbers. */
++WasmEdge_Result HostFuncAdd(void *Data,
++                            const WasmEdge_CallingFrameContext *CallFrameCxt,
++                            const WasmEdge_Value *In, WasmEdge_Value *Out) {
++  int32_t Val1 = WasmEdge_ValueGetI32(In[0]);
++  int32_t Val2 = WasmEdge_ValueGetI32(In[1]);
++  Out[0] = WasmEdge_ValueGenI32(Val1 + Val2);
++  return WasmEdge_Result_Success;
++}
++
++/* The host function to sub 2 int32_t numbers. */
++WasmEdge_Result HostFuncSub(void *Data,
++                            const WasmEdge_CallingFrameContext *CallFrameCxt,
++                            const WasmEdge_Value *In, WasmEdge_Value *Out) {
++  int32_t Val1 = WasmEdge_ValueGetI32(In[0]);
++  int32_t Val2 = WasmEdge_ValueGetI32(In[1]);
++  Out[0] = WasmEdge_ValueGenI32(Val1 - Val2);
++  return WasmEdge_Result_Success;
++}
++```
++
++### Host Modules
++
++Then developers should implement the module creation functions.
++
++Noticed that there can be several module instances in a plug-in shared library.
++Here take a module named as `wasmedge_plugintest_c_module` for the example.
++
++```c
++/* The creation function of creating the module instance. */
++WasmEdge_ModuleInstanceContext *
++CreateTestModule(const struct WasmEdge_ModuleDescriptor *Desc) {
++  /*
++   * The `Desc` is the const pointer to the module descriptor struct:
++   *
++   *   typedef struct WasmEdge_ModuleDescriptor {
++   *     const char *Name;
++   *     const char *Description;
++   *     WasmEdge_ModuleInstanceContext *(*Create)(
++   *         const struct WasmEdge_ModuleDescriptor *);
++   *   } WasmEdge_ModuleDescriptor;
++   * 
++   * Developers can get the name and the description from this descriptor.
++   */
++
++  /* Exported module name of this module instance. */
++  WasmEdge_String ModuleName =
++      WasmEdge_StringCreateByCString("wasmedge_plugintest_c_module");
++  WasmEdge_ModuleInstanceContext *Mod =
++      WasmEdge_ModuleInstanceCreate(ModuleName);
++  WasmEdge_StringDelete(ModuleName);
++
++  WasmEdge_String FuncName;
++  WasmEdge_FunctionTypeContext *FType;
++  WasmEdge_FunctionInstanceContext *FuncCxt;
++  enum WasmEdge_ValType ParamTypes[2], ReturnTypes[1];
++  ParamTypes[0] = WasmEdge_ValType_I32;
++  ParamTypes[1] = WasmEdge_ValType_I32;
++  ReturnTypes[0] = WasmEdge_ValType_I32;
++
++  /* Create and add the host function instances into the module instance. */
++  FType = WasmEdge_FunctionTypeCreate(ParamTypes, 2, ReturnTypes, 1);
++  FuncName = WasmEdge_StringCreateByCString("add");
++  FuncCxt = WasmEdge_FunctionInstanceCreate(FType, HostFuncAdd, NULL, 0);
++  WasmEdge_ModuleInstanceAddFunction(Mod, FuncName, FuncCxt);
++  WasmEdge_StringDelete(FuncName);
++  FuncName = WasmEdge_StringCreateByCString("sub");
++  FuncCxt = WasmEdge_FunctionInstanceCreate(FType, HostFuncSub, NULL, 0);
++  WasmEdge_ModuleInstanceAddFunction(Mod, FuncName, FuncCxt);
++  WasmEdge_StringDelete(FuncName);
++  WasmEdge_FunctionTypeDelete(FType);
++
++  return Mod;
++}
++```
++
++### Plug-in Descriptions
++
++For constructing the plug-in, developers should supply the descriptions of this plug-in and the modules.
++
++```c
++/* The module descriptor array. There can be multiple modules in a plug-in. */
++static WasmEdge_ModuleDescriptor ModuleDesc[] = {{
++    /*
++     * Module name. This is the name for searching and creating the module
++     * instance context by the `WasmEdge_PluginCreateModule()` API.
++     */
++    .Name = "wasmedge_plugintest_c_module",
++    /* Module description. */
++    .Description = "This is for the plugin tests in WasmEdge C API.",
++    /* Creation function pointer. */
++    .Create = CreateTestModule,
++}};
++
++/* The plug-in descriptor */
++static WasmEdge_PluginDescriptor Desc[] = {{
++    /*
++     * Plug-in name. This is the name for searching the plug-in context by the
++     * `WasmEdge_PluginFind()` API.
++     */
++    .Name = "wasmedge_plugintest_c",
++    /* Plug-in description. */
++    .Description = "",
++    /* Plug-in API version. */
++    .APIVersion = WasmEdge_Plugin_CurrentAPIVersion,
++    /* Plug-in version. Developers can define the version of this plug-in. */
++    .Version =
++        {
++            .Major = 0,
++            .Minor = 1,
++            .Patch = 0,
++            .Build = 0,
++        },
++    /* Module count in this plug-in. */
++    .ModuleCount = 1,
++    /* Plug-in option description count in this plug-in (Work in progress). */
++    .ProgramOptionCount = 0,
++    /* Pointer to the module description array. */
++    .ModuleDescriptions = ModuleDesc,
++    /* Pointer to the plug-in option description array (Work in progress). */
++    .ProgramOptions = NULL,
++}};
++```
++
++### Plug-in Options
++
++WORK IN PROGRESS. This section is reserved for the feature in the future.
++
++### Implement the Get Descriptor API
++
++The final step is to implement the `WasmEdge_Plugin_GetDescriptor()` API to return the plug-in descriptor.
++
++```c
++WASMEDGE_CAPI_PLUGIN_EXPORT const WasmEdge_PluginDescriptor *
++WasmEdge_Plugin_GetDescriptor(void) {
++  return &Desc;
++}
++```
++
++## Build
++
++To build the plug-in shared library, developers can choose to build stand-alone by the compiler or use cmake.
++
++### Build with Command
++
++```bash
++clang -shared -std=c11 -DWASMEDGE_PLUGIN testplugin.c -lwasmedge -o libwasmedgePluginTest.so
++```
++
++### Build in CMake
++
++```cmake
++add_library(wasmedgePluginTest
++  SHARED
++  testplugin.c
++)
++
++set_target_properties(wasmedgePluginTest PROPERTIES
++  C_STANDARD 11
++)
++
++target_compile_options(wasmedgePluginTest
++  PUBLIC
++  -DWASMEDGE_PLUGIN
++)
++
++target_link_libraries(wasmedgePluginTest
++  PRIVATE
++  wasmedge
++)
++```
+diff --git a/docs/book/en/src/develop_plugin/cpp.md b/docs/book/en/src/develop_plugin/cpp.md
+new file mode 100644
+index 00000000000..691bc2e0cae
+--- /dev/null
++++ b/docs/book/en/src/develop_plugin/cpp.md
+@@ -0,0 +1,232 @@
++# Develop WasmEdge Plug-in in C++ API
++
++> We recommend developers to [develop plug-ins in WasmEdge C API](c.md).
++
++## Prerequisites
++
++For developing the WasmEdge plug-in in internal C++, developers should [build WasmEdge from source](../contribute/build_from_src.md).
++
++## Example
++
++Assume that the plug-in example is in the file `testplugin.h` and `testplugin.cpp`.
++
++### Host Functions and Modules
++
++The goal of the plug-in is to provide the host functions which can be imported when instantiating WASM.
++Therefore, developers should implement their plug-in host functions in WasmEdge internal C++ first.
++Assume that the host function implementations are in the `testplugin.h`.
++
++```cpp
++#pragma once
++
++#include "plugin/plugin.h"
++
++#include <cstdint>
++#include <string>
++
++namespace WasmEdge {
++namespace Host {
++
++// The environment class. For the register object.
++class WasmEdgePluginTestEnv {
++public:
++  WasmEdgePluginTestEnv() noexcept = default;
++
++  static Plugin::PluginRegister Register;
++};
++
++// The host function base template class. For inheriting the environment class
++// reference.
++template <typename T>
++class WasmEdgePluginTestFunc : public Runtime::HostFunction<T> {
++public:
++  WasmEdgePluginTestFunc(WasmEdgePluginTestEnv &HostEnv)
++      : Runtime::HostFunction<T>(0), Env(HostEnv) {}
++
++protected:
++  WasmEdgePluginTestEnv &Env;
++};
++
++// The host function to add 2 int32_t numbers.
++class WasmEdgePluginTestFuncAdd
++    : public WasmEdgePluginTestFunc<WasmEdgePluginTestFuncAdd> {
++public:
++  WasmEdgePluginTestFuncAdd(WasmEdgePluginTestEnv &HostEnv)
++      : WasmEdgePluginTestFunc(HostEnv) {}
++  Expect<uint32_t> body(const Runtime::CallingFrame &, uint32_t A, uint32_t B) {
++    return A + B;
++  }
++};
++
++// The host function to sub 2 int32_t numbers.
++class WasmEdgePluginTestFuncSub
++    : public WasmEdgePluginTestFunc<WasmEdgePluginTestFuncSub> {
++public:
++  WasmEdgePluginTestFuncSub(WasmEdgePluginTestEnv &HostEnv)
++      : WasmEdgePluginTestFunc(HostEnv) {}
++  Expect<uint32_t> body(const Runtime::CallingFrame &, uint32_t A, uint32_t B) {
++    return A - B;
++  }
++};
++
++// The host module class. There can be several modules in a plug-in.
++class WasmEdgePluginTestModule : public Runtime::Instance::ModuleInstance {
++public:
++  WasmEdgePluginTestModule()
++      : Runtime::Instance::ModuleInstance("wasmedge_plugintest_cpp_module") {
++    addHostFunc("add", std::make_unique<WasmEdgePluginTestFuncAdd>(Env));
++    addHostFunc("sub", std::make_unique<WasmEdgePluginTestFuncSub>(Env));
++  }
++
++  WasmEdgePluginTestEnv &getEnv() { return Env; }
++
++private:
++  WasmEdgePluginTestEnv Env;
++};
++
++} // namespace Host
++} // namespace WasmEdge
++```
++
++### Creation Functions for Modules
++
++Then developers should implement the module creation functions.
++Assume that the following implementations are all in the `testplugin.cpp`.
++
++```cpp
++#include "testplugin.h"
++
++namespace WasmEdge {
++namespace Host {
++namespace {
++
++Runtime::Instance::ModuleInstance *
++create(const Plugin::PluginModule::ModuleDescriptor *) noexcept {
++  // There can be several modules in a plug-in. For that, developers should
++  // implement several `create` functions for each module.
++  return new WasmEdgePluginTestModule;
++}
++
++} // namespace
++} // namespace Host
++} // namespace WasmEdge
++```
++
++### Plug-in Descriptions
++
++For constructing the plug-in, developers should supply the descriptions of this plug-in and the modules.
++
++```cpp
++namespace WasmEdge {
++namespace Host {
++namespace {
++
++Plugin::Plugin::PluginDescriptor Descriptor{
++    // Plug-in name. This is the name for searching the plug-in context by the
++    // `WasmEdge_PluginFind()` C API.
++    .Name = "wasmedge_plugintest_cpp",
++    // Plug-in description.
++    .Description = "",
++    // Plug-in API version.
++    .APIVersion = Plugin::Plugin::CurrentAPIVersion,
++    // Plug-in version.
++    .Version = {0, 10, 0, 0},
++    // Module count in this plug-in.
++    .ModuleCount = 1,
++    // Pointer to module description array.
++    .ModuleDescriptions =
++        // The module descriptor array.
++        (Plugin::PluginModule::ModuleDescriptor[]){
++            {
++                // Module name. This is the name for searching and creating the
++                // module instance context by the
++                // `WasmEdge_PluginCreateModule()` C API.
++                .Name = "wasmedge_plugintest_cpp_module",
++                // Module description.
++                .Description = "This is for the plugin tests in WasmEdge.",
++                // Creation function pointer.
++                .Create = create,
++            },
++        },
++    // Plug-in options (Work in progress).
++    .AddOptions = nullptr,
++};
++
++} // namespace
++} // namespace Host
++} // namespace WasmEdge
++```
++
++### Plug-in Options
++
++WORK IN PROGRESS. This section is reserved for the feature in the future.
++
++### Implement the Plug-in Descriptor Registration
++
++The final step is to implement the `Plugin::PluginRegister` initialization with the plug-in descriptor.
++
++```cpp
++namespace WasmEdge {
++namespace Host {
++
++Plugin::PluginRegister WasmEdgePluginTestEnv::Register(&Descriptor);
++
++} // namespace Host
++} // namespace WasmEdge
++```
++
++## Build
++
++To build the plug-in shared library, developers should build in cmake with the WasmEdge source.
++
++Assume that the folder `test` is created under the `<PATH_TO_WASMEDGE_SOURCE>/plugins`.
++
++Add this line in the `<PATH_TO_WASMEDGE_SOURCE>/plugins/CMakeLists.txt`:
++
++```cmake
++add_subdirectory(test)
++```
++
++Copy the `testplugin.h` and `testplugin.cpp` into the `<PATH_TO_WASMEDGE_SOURCE>/plugins/test` directory.
++
++And then edit the file `<PATH_TO_WASMEDGE_SOURCE>/plugins/test/CMakeLists.txt`:
++
++```cmake
++wasmedge_add_library(wasmedgePluginTest
++  SHARED
++  testplugin.cpp
++)
++
++target_compile_options(wasmedgePluginTest
++  PUBLIC
++  -DWASMEDGE_PLUGIN
++)
++
++if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
++  target_link_options(wasmedgePluginTest
++    PUBLIC
++    -Wl,-U,__ZN8WasmEdge6Plugin14PluginRegisterC1EPKNS0_6Plugin16PluginDescriptorE
++    -Wl,-U,__ZN8WasmEdge6Plugin14PluginRegisterD1Ev
++  )
++endif()
++
++target_include_directories(wasmedgePluginTest
++  PUBLIC
++  $<TARGET_PROPERTY:wasmedgePlugin,INCLUDE_DIRECTORIES>
++  ${CMAKE_CURRENT_SOURCE_DIR}
++)
++
++if(WASMEDGE_LINK_PLUGINS_STATIC)
++  target_link_libraries(wasmedgePluginTest
++    PRIVATE
++    wasmedgeCAPI
++  )
++else()
++  target_link_libraries(wasmedgePluginTest
++    PRIVATE
++    wasmedge_shared
++  )
++endif()
++```
++
++Then you can [follow the guide to build from source](../contribute/build_from_src/linux.md).
+diff --git a/docs/book/en/src/plugin.md b/docs/book/en/src/plugin.md
+index 35441681c8d..7289f1f2586 100644
+--- a/docs/book/en/src/plugin.md
++++ b/docs/book/en/src/plugin.md
+@@ -1,11 +1,10 @@
+ # Develop WasmEdge Plug-in
+ 
+-**This chapter is WORK IN PROGRESS.**
++While the WasmEdge language SDKs allow registering host functions from a host (wrapping) application, developers should implement the host functions before compilation.
++For the other solutions, WasmEdge provides the plug-in architecture to load the plug-in shared library for easier extending of the host functions.
++With developing the plug-ins, WasmEdge SDKs in the supported languages can load and register the host functions from the plug-in shared libraries.
+ 
+-WasmEdge provides a C++ based API for registering extension modules and host functions. While the WasmEdge language SDKs allow registering host functions from a host (wrapping) application, the plugin API allows such extensions to be incorporated into WasmEdge's own building and releasing process.
+-
+-The C API for the plug-in mechanism is under development.
+-In the future, we will release the C API of plug-in mechanism and recommend developers to implement the plug-ins with C API.
++In current, developers can follow the guides to implement the plug-ins in [C API (recommended)](develop_plugin/c.md) or [C++](develop_plugin/cpp.md).
+ 
+ ## Loadable Plug-in
+ 
+diff --git a/plugins/test/CMakeLists.txt b/plugins/test/CMakeLists.txt
+deleted file mode 100644
+index 6cf8cf5b4cc..00000000000
+--- a/plugins/test/CMakeLists.txt
++++ /dev/null
+@@ -1,28 +0,0 @@
+-# SPDX-License-Identifier: Apache-2.0
+-# SPDX-FileCopyrightText: 2019-2022 Second State INC
+-
+-wasmedge_add_library(wasmedgePluginTest
+-  SHARED
+-  test.c
+-)
+-
+-set_target_properties(wasmedgePluginTest PROPERTIES
+-  C_STANDARD 11
+-)
+-
+-target_compile_options(wasmedgePluginTest
+-  PUBLIC
+-  -DWASMEDGE_PLUGIN
+-)
+-
+-if(WASMEDGE_LINK_PLUGINS_STATIC)
+-  target_link_libraries(wasmedgePluginTest
+-    PRIVATE
+-    wasmedgeCAPI
+-  )
+-else()
+-  target_link_libraries(wasmedgePluginTest
+-    PRIVATE
+-    wasmedge_shared
+-  )
+-endif()
+diff --git a/plugins/test/test.c b/plugins/test/test.c
+deleted file mode 100644
+index bf8e95d62aa..00000000000
+--- a/plugins/test/test.c
++++ /dev/null
+@@ -1,75 +0,0 @@
+-// SPDX-License-Identifier: Apache-2.0
+-// SPDX-FileCopyrightText: 2019-2022 Second State INC
+-
+-#include "wasmedge/wasmedge.h"
+-#include <stddef.h>
+-
+-static int32_t TestingOption;
+-static const int32_t TestingOptionDefaultValue = 42;
+-
+-static WasmEdge_Result Test(void *Data __attribute__((unused)),
+-                            const WasmEdge_CallingFrameContext *CallFrameCxt
+-                            __attribute__((unused)),
+-                            const WasmEdge_Value *In __attribute__((unused)),
+-                            WasmEdge_Value *Out __attribute__((unused))) {
+-  return WasmEdge_Result_Success;
+-}
+-
+-static WasmEdge_ModuleInstanceContext *
+-CreateTestModule(const struct WasmEdge_ModuleDescriptor *Desc
+-                 __attribute__((unused))) {
+-  WasmEdge_ModuleInstanceContext *Mod;
+-
+-  {
+-    WasmEdge_String ModuleName = WasmEdge_StringCreateByCString("test");
+-    Mod = WasmEdge_ModuleInstanceCreate(ModuleName);
+-    WasmEdge_StringDelete(ModuleName);
+-  }
+-
+-  {
+-    WasmEdge_FunctionTypeContext *FType =
+-        WasmEdge_FunctionTypeCreate(NULL, 0, NULL, 0);
+-    WasmEdge_FunctionInstanceContext *Func =
+-        WasmEdge_FunctionInstanceCreate(FType, Test, NULL, 0);
+-    WasmEdge_FunctionTypeDelete(FType);
+-    WasmEdge_String FName = WasmEdge_StringCreateByCString("test");
+-    WasmEdge_ModuleInstanceAddFunction(Mod, FName, Func);
+-    WasmEdge_StringDelete(FName);
+-  }
+-
+-  return Mod;
+-}
+-
+-static WasmEdge_ProgramOption PODesc[] = {{
+-    .Name = "test",
+-    .Description = "testing option",
+-    .Type = WasmEdge_ProgramOptionType_Int32,
+-    .Storage = &TestingOption,
+-    .DefaultValue = &TestingOptionDefaultValue,
+-}};
+-static WasmEdge_ModuleDescriptor ModuleDesc[] = {{
+-    .Name = "test",
+-    .Description = "testing module",
+-    .Create = CreateTestModule,
+-}};
+-static WasmEdge_PluginDescriptor Desc[] = {{
+-    .Name = "test",
+-    .Description = "testing plugin",
+-    .APIVersion = WasmEdge_Plugin_CurrentAPIVersion,
+-    .Version =
+-        {
+-            .Major = 0,
+-            .Minor = 0,
+-            .Patch = 0,
+-            .Build = 0,
+-        },
+-    .ModuleCount = 1,
+-    .ProgramOptionCount = 1,
+-    .ModuleDescriptions = ModuleDesc,
+-    .ProgramOptions = PODesc,
+-}};
+-
+-WASMEDGE_CAPI_PLUGIN_EXPORT const WasmEdge_PluginDescriptor *
+-WasmEdge_Plugin_GetDescriptor(void) {
+-  return Desc;
+-}
+diff --git a/test/api/APIUnitTest.cpp b/test/api/APIUnitTest.cpp
+index fcaf5c344aa..7a573e78bae 100644
+--- a/test/api/APIUnitTest.cpp
++++ b/test/api/APIUnitTest.cpp
+@@ -3165,7 +3165,8 @@ TEST(APICoreTest, Plugin) {
+   // Load from the specific path
+   EXPECT_EQ(WasmEdge_PluginListPluginsLength(), 0U);
+   WasmEdge_PluginLoadFromPath(
+-      "../plugins/unittest/libwasmedgePluginTestModule" WASMEDGE_LIB_EXTENSION);
++      "../plugins/unittest/"
++      "libwasmedgePluginTestModuleCPP" WASMEDGE_LIB_EXTENSION);
+   EXPECT_EQ(WasmEdge_PluginListPluginsLength(), 1U);
+ 
+   // Get the loaded plugin length
+@@ -3174,7 +3175,7 @@ TEST(APICoreTest, Plugin) {
+   EXPECT_EQ(WasmEdge_PluginListPlugins(Names, 0), 1U);
+   EXPECT_EQ(WasmEdge_PluginListPlugins(Names, 15), 1U);
+   EXPECT_EQ(std::string(Names[0].Buf, Names[0].Length),
+-            std::string("wasmedge_plugintest"));
++            std::string("wasmedge_plugintest_cpp"));
+ 
+   // Find the plugin context
+   const WasmEdge_PluginContext *PluginCxt =
+@@ -3186,7 +3187,7 @@ TEST(APICoreTest, Plugin) {
+   // Get plugin name
+   Names[0] = WasmEdge_PluginGetPluginName(PluginCxt);
+   EXPECT_EQ(std::string(Names[0].Buf, Names[0].Length),
+-            std::string("wasmedge_plugintest"));
++            std::string("wasmedge_plugintest_cpp"));
+   Names[0] = WasmEdge_PluginGetPluginName(nullptr);
+   EXPECT_EQ(std::string(Names[0].Buf, Names[0].Length), std::string(""));
+ 
+@@ -3201,7 +3202,7 @@ TEST(APICoreTest, Plugin) {
+   EXPECT_EQ(std::string(Names[0].Buf, Names[0].Length), std::string(""));
+   EXPECT_EQ(WasmEdge_PluginListModule(PluginCxt, Names, 15), 1U);
+   EXPECT_EQ(std::string(Names[0].Buf, Names[0].Length),
+-            std::string("wasmedge_plugintest"));
++            std::string("wasmedge_plugintest_cpp_module"));
+ 
+   // Create the module
+   WasmEdge_ModuleInstanceContext *ModCxt =
+diff --git a/test/plugins/unittest/CMakeLists.txt b/test/plugins/unittest/CMakeLists.txt
+index 35d0e5d069b..2de4833c9fb 100644
+--- a/test/plugins/unittest/CMakeLists.txt
++++ b/test/plugins/unittest/CMakeLists.txt
+@@ -1,57 +1,106 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: 2019-2022 Second State INC
+ 
+-# The test plugin module
+-wasmedge_add_library(wasmedgePluginTestModule
++# The test plugin module in C API
++wasmedge_add_library(wasmedgePluginTestModuleC
++  SHARED
++  testplugin.c
++)
++
++set_target_properties(wasmedgePluginTestModuleC PROPERTIES
++  C_STANDARD 11
++)
++
++target_compile_options(wasmedgePluginTestModuleC
++  PUBLIC
++  -DWASMEDGE_PLUGIN
++)
++
++# The test plugin module in C++ API
++wasmedge_add_library(wasmedgePluginTestModuleCPP
+   SHARED
+   testplugin.cpp
+ )
+ 
+-target_compile_options(wasmedgePluginTestModule
++target_compile_options(wasmedgePluginTestModuleCPP
+   PUBLIC
+   -DWASMEDGE_PLUGIN
+ )
+ 
+ if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
+-  target_link_options(wasmedgePluginTestModule
++  target_link_options(wasmedgePluginTestModuleCPP
+     PUBLIC
+     -Wl,-U,__ZN8WasmEdge6Plugin14PluginRegisterC1EPKNS0_6Plugin16PluginDescriptorE
+     -Wl,-U,__ZN8WasmEdge6Plugin14PluginRegisterD1Ev
+   )
+ endif()
+ 
+-target_include_directories(wasmedgePluginTestModule
++target_include_directories(wasmedgePluginTestModuleCPP
+   PUBLIC
+   $<TARGET_PROPERTY:wasmedgePlugin,INCLUDE_DIRECTORIES>
+   ${CMAKE_CURRENT_SOURCE_DIR}
+ )
+ 
+-if(WASMEDGE_LINK_PLUGINS_STATIC)
+-  target_link_libraries(wasmedgePluginTestModule
+-    PRIVATE
+-    wasmedgeCAPI
+-  )
+-else()
+-  target_link_libraries(wasmedgePluginTestModule
+-    PRIVATE
+-    wasmedge_shared
+-  )
+-endif()
++# The test executable for C API
++wasmedge_add_executable(wasmedgePluginUnittestsC
++  unittest_c.cpp
++)
++
++target_include_directories(wasmedgePluginUnittestsC
++  PUBLIC
++  ${CMAKE_CURRENT_SOURCE_DIR}
++)
++
++target_link_libraries(wasmedgePluginUnittestsC
++  PRIVATE
++  ${GTEST_BOTH_LIBRARIES}
++  wasmedgePlugin
++)
+ 
+-# The test executable
+-wasmedge_add_executable(wasmedgePluginUnittests
+-  unittest.cpp
++# The test executable for C++ API
++wasmedge_add_executable(wasmedgePluginUnittestsCPP
++  unittest_cpp.cpp
+ )
+ 
+-target_include_directories(wasmedgePluginUnittests
++target_include_directories(wasmedgePluginUnittestsCPP
+   PUBLIC
+   ${CMAKE_CURRENT_SOURCE_DIR}
+ )
+ 
+-target_link_libraries(wasmedgePluginUnittests
++target_link_libraries(wasmedgePluginUnittestsCPP
+   PRIVATE
+   ${GTEST_BOTH_LIBRARIES}
+   wasmedgePlugin
+ )
+ 
+-add_test(wasmedgePluginUnittests wasmedgePluginUnittests)
++# Link to the WasmEdge library
++if(WASMEDGE_LINK_PLUGINS_STATIC)
++  target_link_libraries(wasmedgePluginTestModuleC
++    PRIVATE
++    wasmedgeCAPI
++  )
++  target_link_libraries(wasmedgePluginTestModuleCPP
++    PRIVATE
++    wasmedgeCAPI
++  )
++  target_link_libraries(wasmedgePluginUnittestsC
++    PRIVATE
++    wasmedgeCAPI
++  )
++else()
++  target_link_libraries(wasmedgePluginTestModuleC
++    PRIVATE
++    wasmedge_shared
++  )
++  target_link_libraries(wasmedgePluginTestModuleCPP
++    PRIVATE
++    wasmedge_shared
++  )
++  target_link_libraries(wasmedgePluginUnittestsC
++    PRIVATE
++    wasmedge_shared
++  )
++endif()
++
++add_test(wasmedgePluginUnittestsC wasmedgePluginUnittestsC)
++add_test(wasmedgePluginUnittestsCPP wasmedgePluginUnittestsCPP)
+diff --git a/test/plugins/unittest/testplugin.c b/test/plugins/unittest/testplugin.c
+new file mode 100644
+index 00000000000..7b58cfaf881
+--- /dev/null
++++ b/test/plugins/unittest/testplugin.c
+@@ -0,0 +1,96 @@
++
++// SPDX-License-Identifier: Apache-2.0
++// SPDX-FileCopyrightText: 2019-2022 Second State INC
++
++#include "wasmedge/wasmedge.h"
++
++#include <stddef.h>
++
++static WasmEdge_String NameString;
++static const char NameCString[] = "name";
++static const WasmEdge_String NameStringDefaultValue = {.Buf = NameCString,
++                                                       .Length = 4};
++
++WasmEdge_Result HostFuncAdd(void *Data __attribute__((unused)),
++                            const WasmEdge_CallingFrameContext *CallFrameCxt
++                            __attribute__((unused)),
++                            const WasmEdge_Value *In, WasmEdge_Value *Out) {
++  int32_t Val1 = WasmEdge_ValueGetI32(In[0]);
++  int32_t Val2 = WasmEdge_ValueGetI32(In[1]);
++  Out[0] = WasmEdge_ValueGenI32(Val1 + Val2);
++  return WasmEdge_Result_Success;
++}
++
++WasmEdge_Result HostFuncSub(void *Data __attribute__((unused)),
++                            const WasmEdge_CallingFrameContext *CallFrameCxt
++                            __attribute__((unused)),
++                            const WasmEdge_Value *In, WasmEdge_Value *Out) {
++  int32_t Val1 = WasmEdge_ValueGetI32(In[0]);
++  int32_t Val2 = WasmEdge_ValueGetI32(In[1]);
++  Out[0] = WasmEdge_ValueGenI32(Val1 - Val2);
++  return WasmEdge_Result_Success;
++}
++
++WasmEdge_ModuleInstanceContext *
++CreateTestModule(const struct WasmEdge_ModuleDescriptor *Desc) {
++  WasmEdge_String ModuleName =
++      WasmEdge_StringCreateByCString(Desc->Name);
++  WasmEdge_ModuleInstanceContext *Mod =
++      WasmEdge_ModuleInstanceCreate(ModuleName);
++  WasmEdge_StringDelete(ModuleName);
++
++  WasmEdge_String FuncName;
++  WasmEdge_FunctionTypeContext *FType;
++  WasmEdge_FunctionInstanceContext *FuncCxt;
++  enum WasmEdge_ValType ParamTypes[2], ReturnTypes[1];
++  ParamTypes[0] = WasmEdge_ValType_I32;
++  ParamTypes[1] = WasmEdge_ValType_I32;
++  ReturnTypes[0] = WasmEdge_ValType_I32;
++
++  FType = WasmEdge_FunctionTypeCreate(ParamTypes, 2, ReturnTypes, 1);
++  FuncName = WasmEdge_StringCreateByCString("add");
++  FuncCxt = WasmEdge_FunctionInstanceCreate(FType, HostFuncAdd, NULL, 0);
++  WasmEdge_ModuleInstanceAddFunction(Mod, FuncName, FuncCxt);
++  WasmEdge_StringDelete(FuncName);
++  FuncName = WasmEdge_StringCreateByCString("sub");
++  FuncCxt = WasmEdge_FunctionInstanceCreate(FType, HostFuncSub, NULL, 0);
++  WasmEdge_ModuleInstanceAddFunction(Mod, FuncName, FuncCxt);
++  WasmEdge_StringDelete(FuncName);
++  WasmEdge_FunctionTypeDelete(FType);
++
++  return Mod;
++}
++
++static WasmEdge_ProgramOption PODesc[] = {{
++    .Name = "name",
++    .Description = "test name string",
++    .Type = WasmEdge_ProgramOptionType_String,
++    .Storage = &NameString,
++    .DefaultValue = &NameStringDefaultValue,
++}};
++static WasmEdge_ModuleDescriptor ModuleDesc[] = {{
++    .Name = "wasmedge_plugintest_c_module",
++    .Description = "This is for the plugin tests in WasmEdge C API.",
++    .Create = CreateTestModule,
++}};
++static WasmEdge_PluginDescriptor Desc = {
++    .Name = "wasmedge_plugintest_c",
++    .Description = "",
++    .APIVersion = WasmEdge_Plugin_CurrentAPIVersion,
++    .Version =
++        {
++            .Major = 0,
++            .Minor = 10,
++            .Patch = 0,
++            .Build = 0,
++        },
++    .ModuleCount = 1,
++    .ProgramOptionCount = 1,
++    .ModuleDescriptions = ModuleDesc,
++    .ProgramOptions = PODesc,
++};
++
++WASMEDGE_CAPI_PLUGIN_EXPORT const WasmEdge_PluginDescriptor *
++WasmEdge_Plugin_GetDescriptor(void) {
++  return &Desc;
++}
+diff --git a/test/plugins/unittest/testplugin.cpp b/test/plugins/unittest/testplugin.cpp
+index 1ed3b67020e..21431b14f06 100644
+--- a/test/plugins/unittest/testplugin.cpp
++++ b/test/plugins/unittest/testplugin.cpp
+@@ -33,7 +33,7 @@ create(const Plugin::PluginModule::ModuleDescriptor *) noexcept {
+ }
+ 
+ Plugin::Plugin::PluginDescriptor Descriptor{
+-    .Name = "wasmedge_plugintest",
++    .Name = "wasmedge_plugintest_cpp",
+     .Description = "",
+     .APIVersion = Plugin::Plugin::CurrentAPIVersion,
+     .Version = {0, 10, 0, 0},
+@@ -41,7 +41,7 @@ Plugin::Plugin::PluginDescriptor Descriptor{
+     .ModuleDescriptions =
+         (Plugin::PluginModule::ModuleDescriptor[]){
+             {
+-                .Name = "wasmedge_plugintest",
++                .Name = "wasmedge_plugintest_cpp_module",
+                 .Description = "This is for the plugin tests in WasmEdge.",
+                 .Create = create,
+             },
+diff --git a/test/plugins/unittest/testplugin.h b/test/plugins/unittest/testplugin.h
+index d01b9de8b2e..214ab0495fc 100644
+--- a/test/plugins/unittest/testplugin.h
++++ b/test/plugins/unittest/testplugin.h
+@@ -76,7 +76,7 @@ class WasmEdgePluginTestFuncNameSize
+ class WasmEdgePluginTestModule : public Runtime::Instance::ModuleInstance {
+ public:
+   WasmEdgePluginTestModule()
+-      : Runtime::Instance::ModuleInstance("wasmedge_plugintest") {
++      : Runtime::Instance::ModuleInstance("wasmedge_plugintest_cpp_module") {
+     addHostFunc("add", std::make_unique<WasmEdgePluginTestFuncAdd>(Env));
+     addHostFunc("sub", std::make_unique<WasmEdgePluginTestFuncSub>(Env));
+     addHostFunc("arg_len", std::make_unique<WasmEdgePluginTestFuncArgLen>(Env));
+diff --git a/test/plugins/unittest/unittest.cpp b/test/plugins/unittest/unittest.cpp
+deleted file mode 100644
+index 1294ec007b3..00000000000
+--- a/test/plugins/unittest/unittest.cpp
++++ /dev/null
+@@ -1,89 +0,0 @@
+-// SPDX-License-Identifier: Apache-2.0
+-// SPDX-FileCopyrightText: 2019-2022 Second State INC
+-
+-#include "common/defines.h"
+-#include "runtime/callingframe.h"
+-#include "runtime/instance/module.h"
+-#include "testplugin.h"
+-
+-#include <algorithm>
+-#include <array>
+-#include <cstdint>
+-#include <gtest/gtest.h>
+-#include <string>
+-#include <vector>
+-
+-namespace {
+-WasmEdge::Runtime::Instance::ModuleInstance *createModule() {
+-  using namespace std::literals::string_view_literals;
+-  WasmEdge::Plugin::Plugin::load(std::filesystem::u8path(
+-      "./libwasmedgePluginTestModule" WASMEDGE_LIB_EXTENSION));
+-  if (const auto *Plugin =
+-          WasmEdge::Plugin::Plugin::find("wasmedge_plugintest"sv)) {
+-    WasmEdge::PO::ArgumentParser Parser;
+-    Plugin->registerOptions(Parser);
+-    Parser.set_raw_value<std::string>("name"sv, std::string("test_name"));
+-    Parser.set_raw_value<std::vector<std::string>>(
+-        "arg"sv, std::vector<std::string>({"arg0", "arg1", "arg2", "arg3"}));
+-    if (const auto *Module = Plugin->findModule("wasmedge_plugintest"sv)) {
+-      return Module->create().release();
+-    }
+-  }
+-  return nullptr;
+-}
+-} // namespace
+-
+-TEST(wasmedgePluginTests, CPP_Run) {
+-  // Create the wasmedge_plugintest module instance.
+-  auto *TestMod =
+-      dynamic_cast<WasmEdge::Host::WasmEdgePluginTestModule *>(createModule());
+-  EXPECT_FALSE(TestMod == nullptr);
+-
+-  WasmEdge::Runtime::Instance::ModuleInstance Mod("");
+-  WasmEdge::Runtime::CallingFrame CallFrame(nullptr, &Mod);
+-  std::array<WasmEdge::ValVariant, 1> RetVal;
+-
+-  // Get the function "arg_len".
+-  auto *FuncInst1 = TestMod->findFuncExports("arg_len");
+-  EXPECT_NE(FuncInst1, nullptr);
+-  EXPECT_TRUE(FuncInst1->isHostFunction());
+-  auto &HostFuncInst1 =
+-      dynamic_cast<WasmEdge::Host::WasmEdgePluginTestFuncArgLen &>(
+-          FuncInst1->getHostFunc());
+-
+-  // Test: Run function successfully.
+-  EXPECT_TRUE(HostFuncInst1.run(CallFrame, {}, RetVal));
+-  EXPECT_EQ(RetVal[0].get<int32_t>(), 4);
+-
+-  // Get the function "name_size".
+-  auto *FuncInst2 = TestMod->findFuncExports("name_size");
+-  EXPECT_NE(FuncInst2, nullptr);
+-  EXPECT_TRUE(FuncInst2->isHostFunction());
+-  auto &HostFuncInst2 =
+-      dynamic_cast<WasmEdge::Host::WasmEdgePluginTestFuncNameSize &>(
+-          FuncInst2->getHostFunc());
+-
+-  // Test: Run function successfully.
+-  EXPECT_TRUE(HostFuncInst2.run(CallFrame, {}, RetVal));
+-  EXPECT_EQ(RetVal[0].get<int32_t>(), 9);
+-
+-  delete TestMod;
+-}
+-
+-TEST(wasmedgePluginTests, CPP_Module) {
+-  // Create the wasmedge_plugintest module instance.
+-  auto *TestMod =
+-      dynamic_cast<WasmEdge::Host::WasmEdgePluginTestModule *>(createModule());
+-  EXPECT_FALSE(TestMod == nullptr);
+-  EXPECT_EQ(TestMod->getFuncExportNum(), 4U);
+-  EXPECT_NE(TestMod->findFuncExports("add"), nullptr);
+-  EXPECT_NE(TestMod->findFuncExports("sub"), nullptr);
+-  EXPECT_NE(TestMod->findFuncExports("arg_len"), nullptr);
+-  EXPECT_NE(TestMod->findFuncExports("name_size"), nullptr);
+-  delete TestMod;
+-}
+-
+-GTEST_API_ int main(int argc, char **argv) {
+-  testing::InitGoogleTest(&argc, argv);
+-  return RUN_ALL_TESTS();
+-}
+diff --git a/test/plugins/unittest/unittest_c.cpp b/test/plugins/unittest/unittest_c.cpp
+new file mode 100644
+index 00000000000..cc36965a923
+--- /dev/null
++++ b/test/plugins/unittest/unittest_c.cpp
+@@ -0,0 +1,167 @@
++// SPDX-License-Identifier: Apache-2.0
++// SPDX-FileCopyrightText: 2019-2022 Second State INC
++
++#include "common/defines.h"
++#include "wasmedge/wasmedge.h"
++
++#include <gtest/gtest.h>
++
++#include <cstring>
++
++namespace {
++WasmEdge_ModuleInstanceContext *createModuleC() {
++  WasmEdge_PluginLoadFromPath(
++      "./libwasmedgePluginTestModuleC" WASMEDGE_LIB_EXTENSION);
++  WasmEdge_String Str = WasmEdge_StringCreateByCString("wasmedge_plugintest_c");
++  const WasmEdge_PluginContext *PluginCxt = WasmEdge_PluginFind(Str);
++  WasmEdge_StringDelete(Str);
++  if (!PluginCxt) {
++    return nullptr;
++  }
++
++  Str = WasmEdge_StringCreateByCString("wasmedge_plugintest_c_module");
++  WasmEdge_ModuleInstanceContext *ModCxt =
++      WasmEdge_PluginCreateModule(PluginCxt, Str);
++  WasmEdge_StringDelete(Str);
++  return ModCxt;
++}
++
++WasmEdge_ModuleInstanceContext *createModuleCPP() {
++  WasmEdge_PluginLoadFromPath(
++      "./libwasmedgePluginTestModuleCPP" WASMEDGE_LIB_EXTENSION);
++  WasmEdge_String Str =
++      WasmEdge_StringCreateByCString("wasmedge_plugintest_cpp");
++  const WasmEdge_PluginContext *PluginCxt = WasmEdge_PluginFind(Str);
++  WasmEdge_StringDelete(Str);
++  if (!PluginCxt) {
++    return nullptr;
++  }
++
++  Str = WasmEdge_StringCreateByCString("wasmedge_plugintest_cpp_module");
++  WasmEdge_ModuleInstanceContext *ModCxt =
++      WasmEdge_PluginCreateModule(PluginCxt, Str);
++  WasmEdge_StringDelete(Str);
++  return ModCxt;
++}
++} // namespace
++
++TEST(wasmedgePluginTests, C_Run) {
++  auto *ExecCxt = WasmEdge_ExecutorCreate(nullptr, nullptr);
++  auto *StoreCxt = WasmEdge_StoreCreate();
++  WasmEdge_Result Res;
++  WasmEdge_FunctionInstanceContext *FuncCxt;
++  WasmEdge_String FuncName;
++  WasmEdge_Value Params[2], Returns[1];
++
++  // Create the wasmedge_plugintest_c_module module instance.
++  auto *ModInstC = createModuleC();
++  EXPECT_FALSE(ModInstC == nullptr);
++
++  // Create the wasmedge_plugintest_cpp_module module instance.
++  auto *ModInstCPP = createModuleCPP();
++  EXPECT_FALSE(ModInstCPP == nullptr);
++
++  // Test: Run the function "wasmedge_plugintest_c.add".
++  FuncName = WasmEdge_StringCreateByCString("add");
++  FuncCxt = WasmEdge_ModuleInstanceFindFunction(ModInstC, FuncName);
++  WasmEdge_StringDelete(FuncName);
++  EXPECT_NE(FuncCxt, nullptr);
++  Params[0] = WasmEdge_ValueGenI32(111);
++  Params[1] = WasmEdge_ValueGenI32(333);
++  Res = WasmEdge_ExecutorInvoke(ExecCxt, FuncCxt, Params, 2, Returns, 1);
++  EXPECT_TRUE(WasmEdge_ResultOK(Res));
++  EXPECT_EQ(WasmEdge_ValueGetI32(Returns[0]), 444);
++
++  // Test: Run the function "wasmedge_plugintest_c.sub".
++  FuncName = WasmEdge_StringCreateByCString("sub");
++  FuncCxt = WasmEdge_ModuleInstanceFindFunction(ModInstC, FuncName);
++  WasmEdge_StringDelete(FuncName);
++  EXPECT_NE(FuncCxt, nullptr);
++  Params[0] = WasmEdge_ValueGenI32(666);
++  Params[1] = WasmEdge_ValueGenI32(555);
++  Res = WasmEdge_ExecutorInvoke(ExecCxt, FuncCxt, Params, 2, Returns, 1);
++  EXPECT_TRUE(WasmEdge_ResultOK(Res));
++  EXPECT_EQ(WasmEdge_ValueGetI32(Returns[0]), 111);
++
++  // Test: Run the function "wasmedge_plugintest_cpp.add".
++  FuncName = WasmEdge_StringCreateByCString("add");
++  FuncCxt = WasmEdge_ModuleInstanceFindFunction(ModInstCPP, FuncName);
++  WasmEdge_StringDelete(FuncName);
++  EXPECT_NE(FuncCxt, nullptr);
++  Params[0] = WasmEdge_ValueGenI32(111);
++  Params[1] = WasmEdge_ValueGenI32(333);
++  Res = WasmEdge_ExecutorInvoke(ExecCxt, FuncCxt, Params, 2, Returns, 1);
++  EXPECT_TRUE(WasmEdge_ResultOK(Res));
++  EXPECT_EQ(WasmEdge_ValueGetI32(Returns[0]), 444);
++
++  // Test: Run the function "wasmedge_plugintest_cpp.sub".
++  FuncName = WasmEdge_StringCreateByCString("sub");
++  FuncCxt = WasmEdge_ModuleInstanceFindFunction(ModInstCPP, FuncName);
++  WasmEdge_StringDelete(FuncName);
++  EXPECT_NE(FuncCxt, nullptr);
++  Params[0] = WasmEdge_ValueGenI32(666);
++  Params[1] = WasmEdge_ValueGenI32(555);
++  Res = WasmEdge_ExecutorInvoke(ExecCxt, FuncCxt, Params, 2, Returns, 1);
++  EXPECT_TRUE(WasmEdge_ResultOK(Res));
++  EXPECT_EQ(WasmEdge_ValueGetI32(Returns[0]), 111);
++
++  // Test: Run the function "wasmedge_plugintest_cpp.arg_len".
++  FuncName = WasmEdge_StringCreateByCString("arg_len");
++  FuncCxt = WasmEdge_ModuleInstanceFindFunction(ModInstCPP, FuncName);
++  WasmEdge_StringDelete(FuncName);
++  EXPECT_NE(FuncCxt, nullptr);
++  Res = WasmEdge_ExecutorInvoke(ExecCxt, FuncCxt, nullptr, 0, Returns, 1);
++  EXPECT_TRUE(WasmEdge_ResultOK(Res));
++  EXPECT_EQ(WasmEdge_ValueGetI32(Returns[0]), 0);
++
++  // Test: Run the function "wasmedge_plugintest_cpp.name_size".
++  FuncName = WasmEdge_StringCreateByCString("name_size");
++  FuncCxt = WasmEdge_ModuleInstanceFindFunction(ModInstCPP, FuncName);
++  WasmEdge_StringDelete(FuncName);
++  EXPECT_NE(FuncCxt, nullptr);
++  Res = WasmEdge_ExecutorInvoke(ExecCxt, FuncCxt, nullptr, 0, Returns, 1);
++  EXPECT_TRUE(WasmEdge_ResultOK(Res));
++  EXPECT_EQ(WasmEdge_ValueGetI32(Returns[0]), 0);
++
++  WasmEdge_ExecutorDelete(ExecCxt);
++  WasmEdge_StoreDelete(StoreCxt);
++  WasmEdge_ModuleInstanceDelete(ModInstC);
++  WasmEdge_ModuleInstanceDelete(ModInstCPP);
++}
++
++TEST(wasmedgePluginTests, C_Module) {
++  WasmEdge_String NameBuf[16];
++
++  // Create the wasmedge_plugintest_c_module module instance.
++  auto *ModInstC = createModuleC();
++  ASSERT_FALSE(ModInstC == nullptr);
++  EXPECT_EQ(WasmEdge_ModuleInstanceListFunctionLength(ModInstC), 2U);
++  std::memset(NameBuf, 0, sizeof(WasmEdge_String) * 16);
++  EXPECT_EQ(WasmEdge_ModuleInstanceListFunction(ModInstC, NameBuf, 16), 2U);
++  EXPECT_TRUE(
++      WasmEdge_StringIsEqual(NameBuf[0], WasmEdge_StringWrap("add", 3U)));
++  EXPECT_TRUE(
++      WasmEdge_StringIsEqual(NameBuf[1], WasmEdge_StringWrap("sub", 3U)));
++  WasmEdge_ModuleInstanceDelete(ModInstC);
++
++  // Create the wasmedge_plugintest_cpp_module module instance.
++  auto *ModInstCPP = createModuleCPP();
++  ASSERT_FALSE(ModInstCPP == nullptr);
++  EXPECT_EQ(WasmEdge_ModuleInstanceListFunctionLength(ModInstCPP), 4U);
++  std::memset(NameBuf, 0, sizeof(WasmEdge_String) * 16);
++  EXPECT_EQ(WasmEdge_ModuleInstanceListFunction(ModInstCPP, NameBuf, 16), 4U);
++  EXPECT_TRUE(
++      WasmEdge_StringIsEqual(NameBuf[0], WasmEdge_StringWrap("add", 3U)));
++  EXPECT_TRUE(
++      WasmEdge_StringIsEqual(NameBuf[1], WasmEdge_StringWrap("arg_len", 7U)));
++  EXPECT_TRUE(
++      WasmEdge_StringIsEqual(NameBuf[2], WasmEdge_StringWrap("name_size", 9U)));
++  EXPECT_TRUE(
++      WasmEdge_StringIsEqual(NameBuf[3], WasmEdge_StringWrap("sub", 3U)));
++  WasmEdge_ModuleInstanceDelete(ModInstCPP);
++}
++
++GTEST_API_ int main(int argc, char **argv) {
++  testing::InitGoogleTest(&argc, argv);
++  return RUN_ALL_TESTS();
++}
+diff --git a/test/plugins/unittest/unittest_cpp.cpp b/test/plugins/unittest/unittest_cpp.cpp
+new file mode 100644
+index 00000000000..00efc45e2b2
+--- /dev/null
++++ b/test/plugins/unittest/unittest_cpp.cpp
+@@ -0,0 +1,120 @@
++// SPDX-License-Identifier: Apache-2.0
++// SPDX-FileCopyrightText: 2019-2022 Second State INC
++
++#include "common/defines.h"
++#include "runtime/callingframe.h"
++#include "runtime/instance/module.h"
++
++#include "testplugin.h"
++
++#include <algorithm>
++#include <array>
++#include <cstdint>
++#include <gtest/gtest.h>
++#include <string>
++#include <vector>
++
++namespace {
++WasmEdge::Runtime::Instance::ModuleInstance *createModuleC() {
++  using namespace std::literals::string_view_literals;
++  WasmEdge::Plugin::Plugin::load(std::filesystem::u8path(
++      "./libwasmedgePluginTestModuleC" WASMEDGE_LIB_EXTENSION));
++  if (const auto *Plugin =
++          WasmEdge::Plugin::Plugin::find("wasmedge_plugintest_c"sv)) {
++    if (const auto *Module =
++            Plugin->findModule("wasmedge_plugintest_c_module"sv)) {
++      return Module->create().release();
++    }
++  }
++  return nullptr;
++}
++
++WasmEdge::Runtime::Instance::ModuleInstance *createModuleCPP() {
++  using namespace std::literals::string_view_literals;
++  WasmEdge::Plugin::Plugin::load(std::filesystem::u8path(
++      "./libwasmedgePluginTestModuleCPP" WASMEDGE_LIB_EXTENSION));
++  if (const auto *Plugin =
++          WasmEdge::Plugin::Plugin::find("wasmedge_plugintest_cpp"sv)) {
++    WasmEdge::PO::ArgumentParser Parser;
++    Plugin->registerOptions(Parser);
++    Parser.set_raw_value<std::string>("name"sv, std::string("test_name"));
++    Parser.set_raw_value<std::vector<std::string>>(
++        "arg"sv, std::vector<std::string>({"arg0", "arg1", "arg2", "arg3"}));
++    if (const auto *Module =
++            Plugin->findModule("wasmedge_plugintest_cpp_module"sv)) {
++      return Module->create().release();
++    }
++  }
++  return nullptr;
++}
++} // namespace
++
++TEST(wasmedgePluginTests, CPP_Run) {
++  // Create the wasmedge_plugintest_cpp_module module instance.
++  auto *TestModCPP = dynamic_cast<WasmEdge::Host::WasmEdgePluginTestModule *>(
++      createModuleCPP());
++  ASSERT_FALSE(TestModCPP == nullptr);
++
++  WasmEdge::Runtime::Instance::ModuleInstance Mod("");
++  WasmEdge::Runtime::CallingFrame CallFrame(nullptr, &Mod);
++  std::array<WasmEdge::ValVariant, 1> RetVal;
++
++  // Get the function "arg_len".
++  auto *FuncInst1 = TestModCPP->findFuncExports("arg_len");
++  EXPECT_NE(FuncInst1, nullptr);
++  EXPECT_TRUE(FuncInst1->isHostFunction());
++  auto &HostFuncInst1 =
++      dynamic_cast<WasmEdge::Host::WasmEdgePluginTestFuncArgLen &>(
++          FuncInst1->getHostFunc());
++
++  // Test: Run function successfully.
++  EXPECT_TRUE(HostFuncInst1.run(CallFrame, {}, RetVal));
++  EXPECT_EQ(RetVal[0].get<int32_t>(), 4);
++
++  // Get the function "name_size".
++  auto *FuncInst2 = TestModCPP->findFuncExports("name_size");
++  EXPECT_NE(FuncInst2, nullptr);
++  EXPECT_TRUE(FuncInst2->isHostFunction());
++  auto &HostFuncInst2 =
++      dynamic_cast<WasmEdge::Host::WasmEdgePluginTestFuncNameSize &>(
++          FuncInst2->getHostFunc());
++
++  // Test: Run function successfully.
++  EXPECT_TRUE(HostFuncInst2.run(CallFrame, {}, RetVal));
++  EXPECT_EQ(RetVal[0].get<int32_t>(), 9);
++
++  delete TestModCPP;
++
++  // Create the wasmedge_plugintest_c_module module instance.
++  auto *TestModC = createModuleC();
++  ASSERT_FALSE(TestModC == nullptr);
++  // The host functions are implemented in the C API.
++  // Therefore not test to invoke them here.
++  delete TestModC;
++}
++
++TEST(wasmedgePluginTests, CPP_Module) {
++  // Create the wasmedge_plugintest_cpp_module module instance.
++  auto *TestModCPP = dynamic_cast<WasmEdge::Host::WasmEdgePluginTestModule *>(
++      createModuleCPP());
++  ASSERT_FALSE(TestModCPP == nullptr);
++  EXPECT_EQ(TestModCPP->getFuncExportNum(), 4U);
++  EXPECT_NE(TestModCPP->findFuncExports("add"), nullptr);
++  EXPECT_NE(TestModCPP->findFuncExports("sub"), nullptr);
++  EXPECT_NE(TestModCPP->findFuncExports("arg_len"), nullptr);
++  EXPECT_NE(TestModCPP->findFuncExports("name_size"), nullptr);
++  delete TestModCPP;
++
++  // Create the wasmedge_plugintest_c_module module instance.
++  auto *TestModC = createModuleC();
++  ASSERT_FALSE(TestModC == nullptr);
++  EXPECT_EQ(TestModC->getFuncExportNum(), 2U);
++  EXPECT_NE(TestModC->findFuncExports("add"), nullptr);
++  EXPECT_NE(TestModC->findFuncExports("sub"), nullptr);
++  delete TestModC;
++}
++
++GTEST_API_ int main(int argc, char **argv) {
++  testing::InitGoogleTest(&argc, argv);
++  return RUN_ALL_TESTS();
++}
